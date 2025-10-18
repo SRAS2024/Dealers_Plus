@@ -1,0 +1,274 @@
+/* Dealers Plus theme
+   Light blue, black, white, gray, glassy and classy
+   Uses Bootstrap 5 defaults with gentle overrides
+*/
+
+:root{
+  --dp-primary: #1c84ff;
+  --dp-primary-600: #176ad1;
+  --dp-primary-700: #1157a2;
+  --dp-bg: #f7f9fc;
+  --dp-card: rgba(255,255,255,0.72);
+  --dp-card-solid: #ffffff;
+  --dp-border: rgba(17, 24, 39, 0.08);
+  --dp-shadow: 0 10px 30px rgba(2, 6, 23, 0.08);
+  --dp-glass: blur(10px) saturate(110%);
+  --dp-text: #0f172a;
+  --dp-muted: #6b7280;
+  --dp-success: #16a34a;
+  --dp-warning: #f59e0b;
+  --dp-danger: #dc2626;
+}
+
+html, body{
+  height: 100%;
+  background: var(--dp-bg);
+  color: var(--dp-text);
+}
+
+body{
+  padding-top: 72px; /* fixed nav */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img{
+  max-width: 100%;
+  height: auto;
+}
+
+/* Utility tints */
+.text-white-75{ color: rgba(255,255,255,0.75) !important; }
+.bg-white-75{ background: rgba(255,255,255,0.75); }
+
+/* Buttons */
+.btn-primary{
+  background: var(--dp-primary);
+  border-color: var(--dp-primary);
+}
+.btn-primary:hover,
+.btn-primary:focus{
+  background: var(--dp-primary-600);
+  border-color: var(--dp-primary-600);
+}
+.btn-outline-primary{
+  color: var(--dp-primary);
+  border-color: var(--dp-primary);
+}
+.btn-outline-primary:hover{
+  background: var(--dp-primary);
+  color: #fff;
+  border-color: var(--dp-primary);
+}
+.btn-primary-soft{
+  background: rgba(28,132,255,0.12);
+  color: var(--dp-primary);
+  border: 1px solid rgba(28,132,255,0.24);
+}
+.btn-primary-soft:hover{
+  background: rgba(28,132,255,0.18);
+  color: var(--dp-primary-700);
+}
+
+/* Glass surfaces */
+.navbar-glass{
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: var(--dp-glass);
+  border-bottom: 1px solid var(--dp-border);
+}
+.glass{
+  background: var(--dp-card);
+  backdrop-filter: var(--dp-glass);
+  border: 1px solid var(--dp-border);
+  border-radius: 16px;
+}
+
+/* Brand mark */
+.brand-mark{
+  width: 28px;
+  height: 28px;
+  display: inline-block;
+  border-radius: 8px;
+  background: radial-gradient(120% 120% at 0% 0%, #7cc4ff 0%, #1c84ff 45%, #0b3f91 100%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35), 0 4px 12px rgba(28,132,255,0.35);
+}
+
+/* Hero section */
+.hero-section{
+  position: relative;
+  padding: 120px 0 80px;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #cbe6ff 0%, rgba(203,230,255,0) 55%),
+    radial-gradient(900px 500px at 90% -20%, #a6d4ff 0%, rgba(166,212,255,0) 50%),
+    linear-gradient(180deg, #0b1220 0%, #0e1628 100%);
+  overflow: hidden;
+}
+.hero-section::after{
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 60% at 50% 0%, rgba(255,255,255,0.15), rgba(255,255,255,0) 70%),
+    linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0));
+}
+.hero-section .search-wrap{
+  max-width: 760px;
+}
+.search-input{
+  background: rgba(255,255,255,0.85);
+  border: 1px solid rgba(255,255,255,0.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), var(--dp-shadow);
+}
+.search-input:focus{
+  background: #fff;
+  border-color: var(--dp-primary);
+  box-shadow: 0 0 0 0.2rem rgba(28,132,255,0.2);
+}
+
+/* Suggestions dropdown */
+#suggestions.dropdown-menu{
+  display: none;
+  border: 1px solid var(--dp-border);
+  padding: 0;
+  overflow: hidden;
+}
+#suggestions.show{
+  display: block;
+}
+#suggestions .dropdown-item{
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+#suggestions .badge{
+  background: rgba(28,132,255,0.15);
+  color: var(--dp-primary);
+  border: 1px solid rgba(28,132,255,0.25);
+}
+
+/* Cards and tables */
+.card{
+  border-radius: 16px;
+  border: 1px solid var(--dp-border);
+  box-shadow: var(--dp-shadow);
+}
+.table thead th{
+  border-bottom: 1px solid var(--dp-border);
+  color: #111827;
+  font-weight: 600;
+}
+.table tbody td{
+  vertical-align: middle;
+}
+
+/* Ratings */
+.text-warning{ color: #fbbf24 !important; }
+.star-input{
+  display: inline-flex;
+  gap: 6px;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+.star-input .star{
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1));
+  transform: translateZ(0);
+  transition: transform .1s ease, opacity .1s ease;
+}
+.star-input .star:hover{
+  transform: scale(1.08);
+}
+.star-input .star.inactive{
+  opacity: .45;
+}
+
+/* Review cards */
+.review-card{
+  border: 1px solid var(--dp-border);
+  background: var(--dp-card-solid);
+  border-radius: 14px;
+  box-shadow: var(--dp-shadow);
+}
+.review-card .review-meta{
+  color: var(--dp-muted);
+  font-size: .9rem;
+}
+
+/* Modal */
+.modal-content.glass{
+  border-radius: 18px;
+  border: 1px solid var(--dp-border);
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: var(--dp-glass);
+}
+
+/* Alerts */
+#globalAlert{
+  border-radius: 12px;
+}
+
+/* Footer */
+footer{
+  background: #fff;
+}
+
+/* Links */
+a{
+  color: var(--dp-primary);
+  text-decoration: none;
+}
+a:hover{
+  color: var(--dp-primary-600);
+  text-decoration: underline;
+}
+
+/* Badges and chips */
+.badge-soft{
+  background: rgba(17,24,39,0.06);
+  color: #111827;
+  border: 1px solid rgba(17,24,39,0.08);
+  border-radius: 999px;
+  padding: .35rem .6rem;
+  font-weight: 500;
+}
+
+/* Action cells */
+.actions{
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+}
+
+/* Focus states */
+.form-control:focus,
+.form-select:focus,
+.btn:focus,
+.btn:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 0.2rem rgba(28,132,255,0.2);
+  border-color: var(--dp-primary);
+}
+
+/* Navbar toggler visible on light glass background */
+.navbar-toggler{
+  border-color: rgba(0,0,0,0.15);
+}
+.navbar-toggler:focus{
+  box-shadow: 0 0 0 0.15rem rgba(28,132,255,0.25);
+}
+
+/* Dealer header rating stars */
+#dealerStars .bi{
+  font-size: 1.25rem;
+}
+
+/* Responsive tweaks */
+@media (max-width: 575.98px){
+  .hero-section{
+    padding: 96px 0 64px;
+  }
+  .display-4{
+    font-size: 2.2rem;
+  }
+}
