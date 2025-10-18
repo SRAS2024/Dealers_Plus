@@ -54,6 +54,14 @@
     return h;
   }
 
+  function sentimentBadge(sentiment) {
+    const s = String(sentiment || "neutral");
+    const label = s.charAt(0).toUpperCase() + s.slice(1);
+    const tone =
+      s === "positive" ? "success" : s === "negative" ? "danger" : "secondary";
+    return `<span class="badge bg-${tone} ms-2">${label}</span>`;
+  }
+
   async function api(path, opts = {}) {
     const res = await fetch(path, {
       headers: { "Content-Type": "application/json" },
@@ -93,6 +101,7 @@
         me = null;
         setAuthedUI(false);
         showAlert("success", "Logged out.");
+        // if user was on a protected action, nothing else to do here
       };
     } else {
       accountBtn.classList.remove("d-none");
@@ -124,6 +133,7 @@
       }
       debounce = setTimeout(async () => {
         try {
+          // alias endpoint supported by server
           const data = await api(`/api/search/suggest?q=${encodeURIComponent(q)}`);
           const items = data.suggestions || [];
           if (!items.length) {
@@ -132,8 +142,8 @@
           }
           dd.innerHTML = items
             .map(
-              it => `<button type="button" class="dropdown-item" data-kind="${it.kind}" data-value="${it.value}">
-                  <span class="badge rounded-pill me-2">${it.kind}</span>
+              it => `<button type="button" class="dropdown-item" data-kind="${it.kind || it.type}" data-value="${it.value}">
+                  <span class="badge rounded-pill me-2">${it.kind || it.type}</span>
                   <span>${it.value}</span>
                 </button>`
             )
@@ -225,6 +235,14 @@
     `;
   }
 
+  function renderAbout() {
+    viewRoot.innerHTML = $("#tpl-about").innerHTML;
+  }
+
+  function renderContact() {
+    viewRoot.innerHTML = $("#tpl-contact").innerHTML;
+  }
+
   async function renderDealers(params) {
     viewRoot.innerHTML = $("#tpl-dealers").innerHTML;
 
@@ -297,8 +315,8 @@
   }
 
   async function renderDealerDetail(id) {
-    // fetch data
-    const { dealer, reviews } = await api(`/api/dealers/${encodeURIComponent(id)}`);
+    // fetch dealer summary
+    const { dealer } = await api(`/api/dealers/${encodeURIComponent(id)}`);
 
     // inject template
     viewRoot.innerHTML = $("#tpl-dealer-detail").innerHTML;
@@ -312,8 +330,93 @@
     $("#dealerRating").textContent = dealer.rating ? dealer.rating.toFixed(1) : "0.0";
     $("#dealerStars").innerHTML = starsHtml(dealer.rating);
 
-    // render reviews
-    renderReviews(reviews);
+    // add a loader and a View more container
+    const reviewsRoot = $("#reviewsList");
+    const moreWrap = document.createElement("div");
+    moreWrap.id = "reviewsMore";
+    moreWrap.className = "d-flex justify-content-center mt-2";
+    reviewsRoot.parentElement.appendChild(moreWrap);
+
+    let page = 1;
+    let nextPage = null;
+
+    async function loadPage(p) {
+      const res = await api(`/api/dealers/${encodeURIComponent(id)}/reviews?page=${p}&limit=5`);
+      const items = res.reviews || [];
+      nextPage = res.nextPage;
+      appendReviews(items);
+      renderMoreButton();
+    }
+
+    function renderMoreButton() {
+      moreWrap.innerHTML = "";
+      if (!nextPage) return;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-outline-primary";
+      btn.textContent = "View more reviews";
+      btn.onclick = async () => {
+        if (!nextPage) return;
+        page = nextPage;
+        await loadPage(page);
+      };
+      moreWrap.appendChild(btn);
+    }
+
+    // render reviews page chunk
+    function appendReviews(list) {
+      const frag = document.createDocumentFragment();
+      list.forEach(rv => {
+        const canEdit = me && rv.userId === me.id;
+        const cardCol = document.createElement("div");
+        cardCol.className = "col-12 col-lg-6";
+        cardCol.innerHTML = `
+          <div class="p-3 review-card" data-review="${rv.id}">
+            <div class="d-flex justify-content-between align-items-start mb-1">
+              <div>
+                <div class="fw-semibold">${rv.userName}</div>
+                <div class="review-meta">${new Date(rv.time).toLocaleString()}</div>
+              </div>
+              <div class="text-nowrap">
+                <span>${starsHtml(rv.rating)}</span>
+                ${rv.sentiment ? sentimentBadge(rv.sentiment) : ""}
+                ${
+                  canEdit
+                    ? `<button class="btn btn-sm btn-outline-dark ms-2" data-action="edit" data-id="${rv.id}" title="Edit review">
+                         <i class="bi bi-pen"></i>
+                       </button>
+                       <button class="btn btn-sm btn-outline-danger ms-2" data-action="delete" data-id="${rv.id}" title="Delete review">
+                         <i class="bi bi-trash"></i>
+                       </button>`
+                    : ""
+                }
+              </div>
+            </div>
+            <div class="mt-2" data-role="text">${escapeHtml(rv.review)}</div>
+            ${
+              rv.purchase
+                ? `<div class="mt-2 small">
+                    <span class="badge-soft me-2">Purchased</span>
+                    ${rv.purchase_date ? `<span class="me-2">${rv.purchase_date}</span>` : ""}
+                    ${rv.car_year ? `<span>${rv.car_year} ${escapeHtml(rv.car_make || "")} ${escapeHtml(rv.car_model || "")}</span>` : ""}
+                  </div>`
+                : ""
+            }
+          </div>
+        `;
+        frag.appendChild(cardCol);
+      });
+      reviewsRoot.appendChild(frag);
+
+      $$('button[data-action="edit"]').forEach(btn => {
+        btn.onclick = () => startEditReview(btn.getAttribute("data-id"));
+      });
+      $$('button[data-action="delete"]').forEach(btn => {
+        btn.onclick = () => deleteReview(btn.getAttribute("data-id"));
+      });
+    }
+
+    // first page
+    await loadPage(page);
 
     // add review button
     $("#btnAddReview").onclick = () => beginAddReview(id);
@@ -338,15 +441,20 @@
       const alertBox = $("#rfAlert");
       alertBox.classList.add("d-none");
       try {
-        const resp = await api(`/api/dealers/${encodeURIComponent(id)}/reviews`, {
+        await api(`/api/dealers/${encodeURIComponent(id)}/reviews`, {
           method: "POST",
           body: JSON.stringify(payload)
         });
         reviewModal.hide();
         showAlert("success", "Review submitted.");
-        $("#dealerRating").textContent = resp.dealer.rating ? resp.dealer.rating.toFixed(1) : "0.0";
-        $("#dealerStars").innerHTML = starsHtml(resp.dealer.rating);
-        renderReviews(resp.reviews, resp.featured);
+        // refresh dealer header and reviews first page so the new one is on top
+        const { dealer: refreshed } = await api(`/api/dealers/${encodeURIComponent(id)}`);
+        $("#dealerRating").textContent = refreshed.rating ? refreshed.rating.toFixed(1) : "0.0";
+        $("#dealerStars").innerHTML = starsHtml(refreshed.rating);
+        // reset list and load first page again
+        $("#reviewsList").innerHTML = "";
+        page = 1;
+        await loadPage(page);
       } catch (err) {
         if (String(err.message).includes("Unauthorized")) {
           // prompt login and retry
@@ -360,53 +468,30 @@
         alertBox.classList.remove("d-none");
       }
     });
-  }
 
-  function renderReviews(list, featuredId = null) {
-    const root = $("#reviewsList");
-    if (!root) return;
-    root.innerHTML = list
-      .map(rv => {
-        const canEdit = me && rv.userId === me.id;
-        const featured = rv.id === featuredId;
-        return `
-          <div class="col-12 col-lg-6">
-            <div class="p-3 review-card ${featured ? "border-primary" : ""}" data-review="${rv.id}">
-              <div class="d-flex justify-content-between align-items-start mb-1">
-                <div>
-                  <div class="fw-semibold">${rv.userName}</div>
-                  <div class="review-meta">${new Date(rv.time).toLocaleString()}</div>
-                </div>
-                <div class="text-nowrap">
-                  <span>${starsHtml(rv.rating)}</span>
-                  ${
-                    canEdit
-                      ? `<button class="btn btn-sm btn-outline-dark ms-2" data-action="edit" data-id="${rv.id}" title="Edit review">
-                           <i class="bi bi-pen"></i>
-                         </button>`
-                      : ""
-                  }
-                </div>
-              </div>
-              <div class="mt-2" data-role="text">${escapeHtml(rv.review)}</div>
-              ${
-                rv.purchase
-                  ? `<div class="mt-2 small">
-                      <span class="badge-soft me-2">Purchased</span>
-                      ${rv.purchase_date ? `<span class="me-2">${rv.purchase_date}</span>` : ""}
-                      ${rv.car_year ? `<span>${rv.car_year} ${escapeHtml(rv.car_make || "")} ${escapeHtml(rv.car_model || "")}</span>` : ""}
-                    </div>`
-                  : ""
-              }
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-
-    $$('button[data-action="edit"]').forEach(btn => {
-      btn.onclick = () => startEditReview(btn.getAttribute("data-id"));
-    });
+    async function deleteReview(reviewId) {
+      if (!confirm("Delete this review?")) return;
+      try {
+        await api(`/api/reviews/${encodeURIComponent(reviewId)}`, { method: "DELETE" });
+        showAlert("success", "Review deleted.");
+        // refresh list from first page
+        $("#reviewsList").innerHTML = "";
+        page = 1;
+        await loadPage(page);
+        // also refresh header rating
+        const { dealer: refreshed } = await api(`/api/dealers/${encodeURIComponent(id)}`);
+        $("#dealerRating").textContent = refreshed.rating ? refreshed.rating.toFixed(1) : "0.0";
+        $("#dealerStars").innerHTML = starsHtml(refreshed.rating);
+      } catch (err) {
+        if (String(err.message).includes("Unauthorized")) {
+          pendingAction = { type: "editReview", reviewId };
+          showLogin();
+          accountModal.show();
+          return;
+        }
+        showAlert("danger", err.message || "Failed to delete review");
+      }
+    }
   }
 
   function startEditReview(id) {
@@ -473,10 +558,13 @@
         editor.remove();
         textEl.classList.remove("d-none");
         showAlert("success", "Review updated.");
-        // bump card to top by reloading dealer view
-        const current = location.hash.split("/");
-        const dealerId = current[2];
-        renderDealerDetail(dealerId);
+        // best effort refresh of first page so the updated review moves to top
+        const parts = location.hash.split("/");
+        const dealerId = parts[2];
+        if (dealerId) {
+          // reload dealer detail page to reset paging and order
+          renderDealerDetail(dealerId);
+        }
       } catch (err) {
         if (String(err.message).includes("Unauthorized")) {
           pendingAction = { type: "editReview", reviewId: id, state: { newText, newRating } };
@@ -611,11 +699,11 @@
       alertBox.classList.add("d-none");
 
       try {
-        const { verifyToken } = await api("/api/auth/verify", {
+        const { verifyToken, resetToken } = await api("/api/auth/verify", {
           method: "POST",
           body: JSON.stringify({ username, firstName, lastName })
         });
-        resetVerifyToken = verifyToken;
+        resetVerifyToken = verifyToken || resetToken;
 
         // Reveal reset fields and turn the submit button into Reset Password
         $("#resetSection").classList.remove("d-none");
@@ -655,7 +743,7 @@
     try {
       await api("/api/auth/reset", {
         method: "POST",
-        body: JSON.stringify({ verifyToken: resetVerifyToken, password: pass1 })
+        body: JSON.stringify({ verifyToken: resetVerifyToken, password: pass1, confirm: pass2 })
       });
       showAlert("success", "Password reset. Please sign in.");
       showLogin();
@@ -696,7 +784,7 @@
       const dealerId = parts[2];
       if (dealerId) {
         renderDealerDetail(dealerId).then(() => {
-          // not trivial to auto open editor for a review without knowing which dealer owns it
+          // no auto open, user can choose to edit again
         });
       }
     }
