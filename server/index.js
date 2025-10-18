@@ -1,6 +1,6 @@
-// Dealers Plus — Express server
-// Railway-friendly: uses PORT or 5000, and TOKEN as the only extra env var.
-// TOKEN defaults to "5000" to match your deployment preference.
+// Dealers Plus Express server
+// Railway friendly: binds to PORT or 5000. Only one custom env var TOKEN.
+// Secrets are derived deterministically from TOKEN with a fixed salt.
 
 const express = require("express");
 const cookieParser = require("cookie-parser");
@@ -8,13 +8,21 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
 const path = require("path");
+const crypto = require("crypto");
 
-// -------- Config
+// ---------- Config
 const PORT = process.env.PORT || 5000;
-const SECRET = process.env.TOKEN || "5000";
+const TOKEN = process.env.TOKEN || "5000";
 const NODE_ENV = process.env.NODE_ENV || "development";
 
-// -------- App
+// derive secrets from TOKEN with a fixed salt
+const FIXED_SALT = "dealersplus.fixed.salt.v1";
+function deriveSecret(seed) {
+  return crypto.createHash("sha256").update(String(seed)).digest("hex");
+}
+const JWT_SECRET = deriveSecret(TOKEN + "|" + FIXED_SALT);
+
+// ---------- App
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
@@ -22,7 +30,7 @@ app.use(cookieParser());
 // Serve static frontend
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-// -------- In-memory data (can be swapped for Mongo later)
+// ---------- In-memory data
 const users = [
   // default admin
   {
@@ -32,7 +40,8 @@ const users = [
     lastName: "User",
     role: "admin",
     // password: Admin@123
-    passwordHash: bcrypt.hashSync("Admin@123", 10)
+    passwordHash: bcrypt.hashSync("Admin@123", 10),
+    resetNonce: uuid() // used to scope reset tokens
   }
 ];
 
@@ -108,8 +117,8 @@ const dealers = [
   }
 ];
 
-// -------- Helpers
-function sign(user) {
+// ---------- Helpers
+function signSession(user) {
   return jwt.sign(
     {
       sub: user.id,
@@ -118,7 +127,7 @@ function sign(user) {
       firstName: user.firstName,
       lastName: user.lastName
     },
-    SECRET,
+    JWT_SECRET,
     { expiresIn: "7d" }
   );
 }
@@ -127,7 +136,7 @@ function authMiddleware(req, res, next) {
   const token = req.cookies?.dp_token;
   if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
-    const payload = jwt.verify(token, SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
     req.user = payload;
     next();
   } catch {
@@ -155,7 +164,52 @@ function toDealerDTO(d) {
   };
 }
 
-// Very small fuzzy search based on normalized inclusion and Levenshtein distance
+// Small sentiment dictionary
+const POS = [
+  "good",
+  "great",
+  "excellent",
+  "friendly",
+  "fast",
+  "clear",
+  "fair",
+  "helpful",
+  "transparent",
+  "clean",
+  "smooth",
+  "amazing",
+  "love",
+  "awesome"
+];
+const NEG = [
+  "bad",
+  "poor",
+  "slow",
+  "rude",
+  "pushy",
+  "expensive",
+  "confusing",
+  "dirty",
+  "worst",
+  "terrible",
+  "awful",
+  "hate"
+];
+function computeSentiment(text) {
+  const t = String(text || "").toLowerCase();
+  let score = 0;
+  POS.forEach(w => {
+    if (t.includes(w)) score += 1;
+  });
+  NEG.forEach(w => {
+    if (t.includes(w)) score -= 1;
+  });
+  if (score > 0) return "positive";
+  if (score < 0) return "negative";
+  return "neutral";
+}
+
+// Basic fuzzy helpers
 function norm(s) {
   return String(s || "")
     .toLowerCase()
@@ -165,12 +219,8 @@ function lev(a, b) {
   a = norm(a);
   b = norm(b);
   const m = [];
-  for (let i = 0; i <= b.length; i++) {
-    m[i] = [i];
-  }
-  for (let j = 0; j <= a.length; j++) {
-    m[0][j] = j;
-  }
+  for (let i = 0; i <= b.length; i++) m[i] = [i];
+  for (let j = 0; j <= a.length; j++) m[0][j] = j;
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
       m[i][j] = Math.min(
@@ -186,11 +236,11 @@ function scoreQuery(q, text) {
   const nq = norm(q);
   const nt = norm(text);
   if (!nq || !nt) return 999;
-  if (nt.includes nq) return 0;
+  if (nt.includes(nq)) return 0; // fixed bug
   return lev(nq, nt);
 }
 
-// -------- Seed some reviews
+// ---------- Seed reviews
 function seedReviews() {
   const sample = [
     {
@@ -237,39 +287,39 @@ function seedReviews() {
     firstName: "Berkly",
     lastName: "Shepley",
     role: "user",
-    passwordHash: bcrypt.hashSync("Password1!", 10)
+    passwordHash: bcrypt.hashSync("Password1!", 10),
+    resetNonce: uuid()
   };
   users.push(demoUser);
 
   dealers.forEach((d, idx) => {
-    const base = sample[idx % sample.length];
-    // push three varied reviews per dealer
-    for (let k = 0; k < 3; k++) {
+    // ensure at least five baseline reviews per dealer
+    for (let k = 0; k < 5; k++) {
+      const base = sample[(idx + k) % sample.length];
       reviews.push({
         id: uuid(),
         dealerId: d.id,
         userId: demoUser.id,
         userName: `${demoUser.firstName} ${demoUser.lastName}`,
         review:
-          k === 0
+          k % 2 === 0
             ? base.review
-            : k === 1
-            ? "Total grid-enabled service desk. Smooth from start to finish."
             : "Excellent customer service. Transparent pricing and quality delivery.",
-        rating: Math.max(3, Math.min(5, (base.rating || 4) - 1 + k)),
+        rating: Math.max(3, Math.min(5, (base.rating || 4) - 1 + (k % 3))),
         time: new Date(Date.now() - (k + 1) * 86400000).toISOString(),
         purchase: !!base.purchase,
         purchase_date: base.purchase ? "07/11/2020" : "",
         car_make: base.car_make || "Ford",
         car_model: base.car_model || "F-150",
-        car_year: base.car_year || 2019
+        car_year: base.car_year || 2019,
+        sentiment: computeSentiment(base.review)
       });
     }
   });
 }
 seedReviews();
 
-// -------- Routes
+// ---------- Routes
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
@@ -290,10 +340,11 @@ app.post("/api/auth/register", async (req, res) => {
     firstName,
     lastName,
     role: "user",
-    passwordHash: await bcrypt.hash(password, 10)
+    passwordHash: await bcrypt.hash(password, 10),
+    resetNonce: uuid()
   };
   users.push(user);
-  const token = sign(user);
+  const token = signSession(user);
   res
     .cookie("dp_token", token, {
       httpOnly: true,
@@ -301,7 +352,15 @@ app.post("/api/auth/register", async (req, res) => {
       secure: NODE_ENV === "production",
       maxAge: 7 * 24 * 60 * 60 * 1000
     })
-    .json({ ok: true, user: { username, firstName, lastName, role: "user" } });
+    .json({
+      ok: true,
+      user: {
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role
+      }
+    });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -316,7 +375,7 @@ app.post("/api/auth/login", async (req, res) => {
   if (!ok) {
     return res.status(401).json({ error: "Invalid Username or Password" });
   }
-  const token = sign(user);
+  const token = signSession(user);
   res
     .cookie("dp_token", token, {
       httpOnly: true,
@@ -339,7 +398,24 @@ app.post("/api/auth/logout", (req, res) => {
   res.clearCookie("dp_token").json({ ok: true });
 });
 
-// Forgot password flow: verify then reset
+// Forgot verify: canonical per spec, plus backward compatible alias
+function signResetToken(user) {
+  const payload = { sub: user.id, kind: "reset", nonce: user.resetNonce };
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: "10m" });
+}
+app.post("/api/auth/forgot-verify", (req, res) => {
+  const { username, firstName, lastName } = req.body || {};
+  const user = users.find(
+    u =>
+      u.username.toLowerCase() === String(username || "").toLowerCase() &&
+      u.firstName.toLowerCase() === String(firstName || "").toLowerCase() &&
+      u.lastName.toLowerCase() === String(lastName || "").toLowerCase()
+  );
+  if (!user) return res.status(401).json({ error: "Invalid Credentials" });
+  const resetToken = signResetToken(user);
+  res.json({ ok: true, resetToken });
+});
+// alias to match your current client
 app.post("/api/auth/verify", (req, res) => {
   const { username, firstName, lastName } = req.body || {};
   const user = users.find(
@@ -349,29 +425,37 @@ app.post("/api/auth/verify", (req, res) => {
       u.lastName.toLowerCase() === String(lastName || "").toLowerCase()
   );
   if (!user) return res.status(401).json({ error: "Invalid Credentials" });
-
-  // short lived token to allow password reset without email
-  const verifyToken = jwt.sign({ sub: user.id, kind: "reset" }, SECRET, {
-    expiresIn: "10m"
-  });
+  const verifyToken = signResetToken(user);
   res.json({ ok: true, verifyToken });
 });
 
 app.post("/api/auth/reset", async (req, res) => {
-  const { verifyToken, password } = req.body || {};
+  const { resetToken, verifyToken, password, confirm } = req.body || {};
+  const token = resetToken || verifyToken;
+  if (!token) return res.status(400).json({ error: "Missing token" });
+  if (confirm != null && password !== confirm) {
+    return res.status(400).json({ error: "passwords do not match" });
+  }
   try {
-    const payload = jwt.verify(verifyToken, SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
     if (payload.kind !== "reset") throw new Error("bad kind");
     const user = users.find(u => u.id === payload.sub);
     if (!user) return res.status(404).json({ error: "Not found" });
+    // check nonce
+    if (payload.nonce !== user.resetNonce) {
+      return res.status(401).json({ error: "Invalid Credentials" });
+    }
     user.passwordHash = await bcrypt.hash(password, 10);
+    // rotate nonce so old tokens cannot be reused
+    user.resetNonce = uuid();
     return res.json({ ok: true });
   } catch {
     return res.status(401).json({ error: "Invalid Credentials" });
   }
 });
 
-app.get("/api/me", authMiddleware, (req, res) => {
+// Me: canonical and alias to match your client
+function meHandler(req, res) {
   res.json({
     ok: true,
     user: {
@@ -382,7 +466,9 @@ app.get("/api/me", authMiddleware, (req, res) => {
       role: req.user.role
     }
   });
-});
+}
+app.get("/api/auth/me", authMiddleware, meHandler);
+app.get("/api/me", authMiddleware, meHandler);
 
 // Admin: add make and model
 app.post("/api/admin/makes", authMiddleware, adminMiddleware, (req, res) => {
@@ -446,7 +532,7 @@ app.get("/api/dealers", (req, res) => {
       })
       .sort((a, b) => a.score - b.score);
 
-    // if best score is high, return empty to trigger "No matching results"
+    // if best score is high, return empty to trigger No matching results
     if (!scored.length || scored[0].score > 4) {
       return res.json({ ok: true, dealers: [] });
     }
@@ -467,6 +553,20 @@ app.get("/api/dealers/:id", (req, res) => {
     dealer: toDealerDTO(d),
     reviews: r
   });
+});
+
+// paged reviews per spec
+app.get("/api/dealers/:id/reviews", (req, res) => {
+  const { id } = req.params;
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.max(1, Math.min(50, parseInt(req.query.limit || "5", 10)));
+  const all = reviews
+    .filter(rv => rv.dealerId === id)
+    .sort((a, b) => new Date(b.time) - new Date(a.time));
+  const start = (page - 1) * limit;
+  const slice = all.slice(start, start + limit);
+  const nextPage = start + limit < all.length ? page + 1 : null;
+  res.json({ ok: true, reviews: slice, page, nextPage });
 });
 
 app.post("/api/dealers/:id/reviews", authMiddleware, (req, res) => {
@@ -498,7 +598,8 @@ app.post("/api/dealers/:id/reviews", authMiddleware, (req, res) => {
     purchase_date: purchase ? String(purchase_date || "") : "",
     car_make: car_make || "",
     car_model: car_model || "",
-    car_year: Number(car_year) || ""
+    car_year: Number(car_year) || "",
+    sentiment: computeSentiment(review)
   };
 
   if (!rv.review) return res.status(400).json({ error: "Review text required" });
@@ -522,42 +623,63 @@ app.put("/api/reviews/:id", authMiddleware, (req, res) => {
   const { review, rating } = req.body || {};
   if (typeof review === "string") rv.review = review.trim();
   if (rating != null) rv.rating = Math.max(1, Math.min(5, Number(rating) || 0));
+  rv.sentiment = computeSentiment(rv.review);
   rv.time = new Date().toISOString(); // bump to top
   res.json({ ok: true, review: rv });
 });
 
-// Suggestions for the typeahead (three items)
-app.get("/api/search/suggest", (req, res) => {
-  const { q } = req.query;
-  if (!q) return res.json({ ok: true, suggestions: [] });
+app.delete("/api/reviews/:id", authMiddleware, (req, res) => {
+  const idx = reviews.findIndex(x => x.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Not found" });
+  const rv = reviews[idx];
+  if (!(rv.userId === req.user.sub || req.user.role === "admin")) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  reviews.splice(idx, 1);
+  res.json({ ok: true });
+});
 
+// Smart search suggestions
+// Canonical per spec: /api/dealers/search?query=, plus a backward compatible alias /api/search/suggest?q=
+function suggestionsFor(q) {
+  if (!q) return [];
   const pool = [
-    ...dealers.map(d => ({ kind: "dealer", value: d.name })),
-    ...dealers.map(d => ({ kind: "city", value: d.city })),
-    ...dealers.map(d => ({ kind: "state", value: d.state })),
-    ...dealers.map(d => ({ kind: "zip", value: d.zip })),
+    ...dealers.map(d => ({ type: "dealer", kind: "dealer", value: d.name })),
+    ...dealers.map(d => ({ type: "city", kind: "city", value: d.city })),
+    ...dealers.map(d => ({ type: "state", kind: "state", value: d.state })),
+    ...dealers.map(d => ({ type: "zip", kind: "zip", value: d.zip })),
     ...Array.from(new Set(dealers.flatMap(d => d.brands))).map(b => ({
+      type: "brand",
       kind: "brand",
       value: b
     }))
   ];
-
-  const scored = pool
+  return pool
     .map(it => ({ ...it, score: scoreQuery(q, it.value) }))
     .sort((a, b) => a.score - b.score)
     .slice(0, 3);
+}
 
-  res.json({ ok: true, suggestions: scored });
+app.get("/api/dealers/search", (req, res) => {
+  const { query } = req.query;
+  const suggestions = suggestionsFor(query);
+  res.json({ ok: true, suggestions });
 });
 
-// Fallback to index.html for app routes
+// alias for your current client code
+app.get("/api/search/suggest", (req, res) => {
+  const { q } = req.query;
+  const suggestions = suggestionsFor(q);
+  res.json({ ok: true, suggestions });
+});
+
+// Fallback to index.html for non-API routes
 app.get("*", (req, res, next) => {
-  // only serve index for non-api paths
   if (req.path.startsWith("/api/")) return next();
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-// -------- Start
+// ---------- Start
 app.listen(PORT, () => {
   console.log(`Dealers Plus server running on port ${PORT}`);
 });
