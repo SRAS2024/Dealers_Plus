@@ -31,134 +31,11 @@ app.use(cookieParser());
 // Serve static frontend
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-// ---------- In-memory data
-const users = [
-  // default admin
-  {
-    id: uuid(),
-    username: "admin",
-    firstName: "Admin",
-    lastName: "User",
-    role: "admin",
-    // password: Admin@123
-    passwordHash: bcrypt.hashSync("Admin@123", 10),
-    resetNonce: uuid() // used to scope reset tokens
-  }
-];
-
-const makes = [
-  { id: uuid(), name: "Toyota" },
-  { id: uuid(), name: "Honda" },
-  { id: uuid(), name: "Ford" },
-  { id: uuid(), name: "Chevrolet" },
-  { id: uuid(), name: "Audi" },
-  { id: uuid(), name: "BMW" },
-  { id: uuid(), name: "Mercedes-Benz" }
-];
-
-const models = [
-  { id: uuid(), make: "Toyota", name: "Camry" },
-  { id: uuid(), make: "Toyota", name: "RAV4" },
-  { id: uuid(), make: "Honda", name: "Civic" },
-  { id: uuid(), make: "Honda", name: "Accord" },
-  { id: uuid(), make: "Ford", name: "F-150" },
-  { id: uuid(), make: "Ford", name: "Escape" },
-  { id: uuid(), make: "Audi", name: "A6" },
-  { id: uuid(), make: "BMW", name: "3 Series" },
-  { id: uuid(), make: "Mercedes-Benz", name: "C-Class" }
-];
-
-const reviews = []; // filled by seedReviews()
-
-// ---------- Dealers data
-// Built in sample for local dev if no seed file is present
-const defaultDealers = [
-  {
-    id: "D001",
-    name: "Rocky Mountain Motors",
-    city: "Denver",
-    state: "CO",
-    zip: "80202",
-    brands: ["Toyota", "Honda"],
-    phone: "(303) 555-1300",
-    isNew: true,
-    isUsed: true
-  },
-  {
-    id: "D002",
-    name: "Hudson River Autos",
-    city: "New York",
-    state: "NY",
-    zip: "10001",
-    brands: ["Audi", "BMW", "Mercedes-Benz"],
-    phone: "(212) 555-2200",
-    isNew: true,
-    isUsed: true
-  },
-  {
-    id: "D003",
-    name: "Lone Star Drive",
-    city: "Austin",
-    state: "TX",
-    zip: "73301",
-    brands: ["Ford", "Chevrolet"],
-    phone: "(512) 555-9988",
-    isNew: true,
-    isUsed: true
-  },
-  {
-    id: "D004",
-    name: "Windy City Wheels",
-    city: "Chicago",
-    state: "IL",
-    zip: "60601",
-    brands: ["Honda", "Toyota", "Ford"],
-    phone: "(773) 555-4400",
-    isNew: true,
-    isUsed: true
-  },
-  {
-    id: "D005",
-    name: "Golden Gate Garage",
-    city: "San Francisco",
-    state: "CA",
-    zip: "94103",
-    brands: ["Audi", "BMW"],
-    phone: "(415) 555-7777",
-    isNew: true,
-    isUsed: true
-  }
-];
-
-function loadDealersFromSeed() {
-  const file = path.join(__dirname, "..", "seed", "dealers.json");
-  try {
-    const raw = fs.readFileSync(file, "utf8");
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr) && arr.length) {
-      return arr.map((d, i) => ({
-        id: d.id || `D${String(i + 1).padStart(4, "0")}`,
-        name: String(d.name || "").trim(),
-        city: String(d.city || "").trim(),
-        state: String(d.state || "").trim().slice(0, 2).toUpperCase(),
-        zip: String(d.zip || "").padStart(5, "0").slice(0, 5),
-        brands: Array.isArray(d.brands) ? d.brands : [],
-        phone: d.phone || "",
-        isNew: Boolean(d.isNew),
-        isUsed: Boolean(d.isUsed)
-      }));
-    }
-  } catch (e) {
-    if (NODE_ENV !== "test") {
-      console.log("No seed/dealers.json found. Using built in sample dealers.");
-    }
-  }
-  return defaultDealers;
-}
-
-let dealers = loadDealersFromSeed();
-
 // ---------- Helpers
+function toZip5(s) {
+  const d = String(s || "").replace(/\D+/g, "");
+  return d.slice(0, 5);
+}
 function signSession(user) {
   return jwt.sign(
     {
@@ -280,6 +157,145 @@ function scoreQuery(q, text) {
   if (nt.includes(nq)) return 0;
   return lev(nq, nt);
 }
+
+// ---------- In-memory data
+const users = [
+  // default admin
+  {
+    id: uuid(),
+    username: "admin",
+    firstName: "Admin",
+    lastName: "User",
+    role: "admin",
+    // password: Admin@123
+    passwordHash: bcrypt.hashSync("Admin@123", 10),
+    resetNonce: uuid() // used to scope reset tokens
+  }
+];
+
+const makes = [
+  { id: uuid(), name: "Toyota" },
+  { id: uuid(), name: "Honda" },
+  { id: uuid(), name: "Ford" },
+  { id: uuid(), name: "Chevrolet" },
+  { id: uuid(), name: "Audi" },
+  { id: uuid(), name: "BMW" },
+  { id: uuid(), name: "Mercedes-Benz" }
+];
+
+const models = [
+  { id: uuid(), make: "Toyota", name: "Camry" },
+  { id: uuid(), make: "Toyota", name: "RAV4" },
+  { id: uuid(), make: "Honda", name: "Civic" },
+  { id: uuid(), make: "Honda", name: "Accord" },
+  { id: uuid(), make: "Ford", name: "F-150" },
+  { id: uuid(), make: "Ford", name: "Escape" },
+  { id: uuid(), make: "Audi", name: "A6" },
+  { id: uuid(), make: "BMW", name: "3 Series" },
+  { id: uuid(), make: "Mercedes-Benz", name: "C-Class" }
+];
+
+const reviews = []; // filled by seedReviews()
+
+// ---------- Dealers data
+// Built in sample for local dev if no seed file is present
+const defaultDealers = [
+  {
+    id: "D001",
+    name: "Rocky Mountain Motors",
+    city: "Denver",
+    state: "CO",
+    zip: "80202",
+    brands: ["Toyota", "Honda"],
+    phone: "(303) 555-1300",
+    isNew: true,
+    isUsed: true,
+    location: { lat: 39.752, lon: -104.998 }
+  },
+  {
+    id: "D002",
+    name: "Hudson River Autos",
+    city: "New York",
+    state: "NY",
+    zip: "10001",
+    brands: ["Audi", "BMW", "Mercedes-Benz"],
+    phone: "(212) 555-2200",
+    isNew: true,
+    isUsed: true,
+    location: { lat: 40.7506, lon: -73.9972 }
+  },
+  {
+    id: "D003",
+    name: "Lone Star Drive",
+    city: "Austin",
+    state: "TX",
+    zip: "73301",
+    brands: ["Ford", "Chevrolet"],
+    phone: "(512) 555-9988",
+    isNew: true,
+    isUsed: true,
+    location: { lat: 30.2711, lon: -97.7437 }
+  },
+  {
+    id: "D004",
+    name: "Windy City Wheels",
+    city: "Chicago",
+    state: "IL",
+    zip: "60601",
+    brands: ["Honda", "Toyota", "Ford"],
+    phone: "(773) 555-4400",
+    isNew: true,
+    isUsed: true,
+    location: { lat: 41.8853, lon: -87.6229 }
+  },
+  {
+    id: "D005",
+    name: "Golden Gate Garage",
+    city: "San Francisco",
+    state: "CA",
+    zip: "94103",
+    brands: ["Audi", "BMW"],
+    phone: "(415) 555-7777",
+    isNew: true,
+    isUsed: true,
+    location: { lat: 37.7739, lon: -122.4312 }
+  }
+];
+
+function loadDealersFromSeed() {
+  const file = path.join(__dirname, "..", "seed", "dealers.json");
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length) {
+      return arr.map((d, i) => ({
+        id: d.id || `D${String(i + 1).padStart(4, "0")}`,
+        name: String(d.name || "").trim(),
+        city: String(d.city || "").trim(),
+        state: String(d.state || "").trim().slice(0, 2).toUpperCase(),
+        zip: toZip5(d.zip),
+        brands: Array.isArray(d.brands) ? d.brands : [],
+        phone: d.phone || "",
+        isNew: Boolean(d.isNew),
+        isUsed: Boolean(d.isUsed !== false),
+        // keep coordinates from OSM seed when available
+        location:
+          d.location &&
+          typeof d.location.lat === "number" &&
+          typeof d.location.lon === "number"
+            ? { lat: d.location.lat, lon: d.location.lon }
+            : null
+      }));
+    }
+  } catch (e) {
+    if (NODE_ENV !== "test") {
+      console.log("No seed/dealers.json found. Using built in sample dealers.");
+    }
+  }
+  return defaultDealers;
+}
+
+let dealers = loadDealersFromSeed();
 
 // ---------- Seed reviews
 function seedReviews() {
@@ -482,13 +498,11 @@ app.post("/api/auth/reset", async (req, res) => {
     if (payload.kind !== "reset") throw new Error("bad kind");
     const user = users.find(u => u.id === payload.sub);
     if (!user) return res.status(404).json({ error: "Not found" });
-    // check nonce
     if (payload.nonce !== user.resetNonce) {
       return res.status(401).json({ error: "Invalid Credentials" });
     }
     user.passwordHash = await bcrypt.hash(password, 10);
-    // rotate nonce so old tokens cannot be reused
-    user.resetNonce = uuid();
+    user.resetNonce = uuid(); // rotate
     return res.json({ ok: true });
   } catch {
     return res.status(401).json({ error: "Invalid Credentials" });
@@ -584,7 +598,8 @@ app.get("/api/dealers", (req, res) => {
     list = list.filter(d => d.city.toLowerCase() === String(city).toLowerCase());
   }
   if (zip) {
-    list = list.filter(d => d.zip === String(zip));
+    const z = toZip5(zip);
+    list = list.filter(d => d.zip === z);
   }
   if (brand) {
     list = list.filter(d =>
@@ -744,21 +759,51 @@ app.delete("/api/reviews/:id", authMiddleware, (req, res) => {
 // Canonical per spec: /api/dealers/search?query=, plus a backward compatible alias /api/search/suggest?q=
 function suggestionsFor(q) {
   if (!q) return [];
+  // Build a pool with potential duplicates
   const pool = [
+    // dealer names
     ...dealers.map(d => ({ type: "dealer", kind: "dealer", value: d.name })),
-    ...dealers.map(d => ({ type: "city", kind: "city", value: d.city })),
-    ...dealers.map(d => ({ type: "state", kind: "state", value: d.state })),
-    ...dealers.map(d => ({ type: "zip", kind: "zip", value: d.zip })),
+    // unique cities
+    ...Array.from(new Set(dealers.map(d => d.city).filter(Boolean))).map(c => ({
+      type: "city",
+      kind: "city",
+      value: c
+    })),
+    // unique states
+    ...Array.from(new Set(dealers.map(d => d.state).filter(Boolean))).map(s => ({
+      type: "state",
+      kind: "state",
+      value: s
+    })),
+    // unique zips
+    ...Array.from(new Set(dealers.map(d => d.zip).filter(Boolean))).map(z => ({
+      type: "zip",
+      kind: "zip",
+      value: z
+    })),
+    // unique brands
     ...Array.from(new Set(dealers.flatMap(d => d.brands))).map(b => ({
       type: "brand",
       kind: "brand",
       value: b
     }))
   ];
-  return pool
+
+  // score then dedupe by type + value to avoid repeats in the top three
+  const scored = pool
     .map(it => ({ ...it, score: scoreQuery(q, it.value) }))
-    .sort((a, b) => a.score - b.score)
-    .slice(0, 3);
+    .sort((a, b) => a.score - b.score);
+
+  const seen = new Set();
+  const out = [];
+  for (const it of scored) {
+    const key = `${it.type}|${String(it.value).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ type: it.type, kind: it.kind, value: it.value });
+    if (out.length === 3) break;
+  }
+  return out;
 }
 
 app.get("/api/dealers/search", (req, res) => {
