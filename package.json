@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
-    "seed": "node server/seed.js"
+    "seed": "node server/seed.js",
+    "seed:free": "node server/seed.osm.js"
   },
   "engines": {
     "node": ">=18"
