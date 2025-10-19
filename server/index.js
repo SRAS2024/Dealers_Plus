@@ -9,6 +9,7 @@ const bcrypt = require("bcryptjs");
 const { v4: uuid } = require("uuid");
 const path = require("path");
 const crypto = require("crypto");
+const fs = require("fs");
 
 // ---------- Config
 const PORT = process.env.PORT || 5000;
@@ -69,7 +70,9 @@ const models = [
 
 const reviews = []; // filled by seedReviews()
 
-const dealers = [
+// ---------- Dealers data
+// Built in sample for local dev if no seed file is present
+const defaultDealers = [
   {
     id: "D001",
     name: "Rocky Mountain Motors",
@@ -77,7 +80,9 @@ const dealers = [
     state: "CO",
     zip: "80202",
     brands: ["Toyota", "Honda"],
-    phone: "(303) 555-1300"
+    phone: "(303) 555-1300",
+    isNew: true,
+    isUsed: true
   },
   {
     id: "D002",
@@ -86,7 +91,9 @@ const dealers = [
     state: "NY",
     zip: "10001",
     brands: ["Audi", "BMW", "Mercedes-Benz"],
-    phone: "(212) 555-2200"
+    phone: "(212) 555-2200",
+    isNew: true,
+    isUsed: true
   },
   {
     id: "D003",
@@ -95,7 +102,9 @@ const dealers = [
     state: "TX",
     zip: "73301",
     brands: ["Ford", "Chevrolet"],
-    phone: "(512) 555-9988"
+    phone: "(512) 555-9988",
+    isNew: true,
+    isUsed: true
   },
   {
     id: "D004",
@@ -104,7 +113,9 @@ const dealers = [
     state: "IL",
     zip: "60601",
     brands: ["Honda", "Toyota", "Ford"],
-    phone: "(773) 555-4400"
+    phone: "(773) 555-4400",
+    isNew: true,
+    isUsed: true
   },
   {
     id: "D005",
@@ -113,9 +124,39 @@ const dealers = [
     state: "CA",
     zip: "94103",
     brands: ["Audi", "BMW"],
-    phone: "(415) 555-7777"
+    phone: "(415) 555-7777",
+    isNew: true,
+    isUsed: true
   }
 ];
+
+function loadDealersFromSeed() {
+  const file = path.join(__dirname, "..", "seed", "dealers.json");
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr) && arr.length) {
+      return arr.map((d, i) => ({
+        id: d.id || `D${String(i + 1).padStart(4, "0")}`,
+        name: String(d.name || "").trim(),
+        city: String(d.city || "").trim(),
+        state: String(d.state || "").trim().slice(0, 2).toUpperCase(),
+        zip: String(d.zip || "").padStart(5, "0").slice(0, 5),
+        brands: Array.isArray(d.brands) ? d.brands : [],
+        phone: d.phone || "",
+        isNew: Boolean(d.isNew),
+        isUsed: Boolean(d.isUsed)
+      }));
+    }
+  } catch (e) {
+    if (NODE_ENV !== "test") {
+      console.log("No seed/dealers.json found. Using built in sample dealers.");
+    }
+  }
+  return defaultDealers;
+}
+
+let dealers = loadDealersFromSeed();
 
 // ---------- Helpers
 function signSession(user) {
@@ -236,7 +277,7 @@ function scoreQuery(q, text) {
   const nq = norm(q);
   const nt = norm(text);
   if (!nq || !nt) return 999;
-  if (nt.includes(nq)) return 0; // fixed bug
+  if (nt.includes(nq)) return 0;
   return lev(nq, nt);
 }
 
@@ -493,14 +534,47 @@ app.post("/api/admin/models", authMiddleware, adminMiddleware, (req, res) => {
   res.json({ ok: true, model: md });
 });
 
-// Dealers and reviews
+// ---------- Cars catalog
+// Years helper: 1980 through current year
+const YEAR_START = 1980;
+const YEAR_END = new Date().getFullYear();
+const DEFAULT_YEARS = Array.from({ length: YEAR_END - YEAR_START + 1 }, (_, i) => YEAR_START + i);
+
+// GET /api/cars/makes
+app.get("/api/cars/makes", (req, res) => {
+  const list = makes
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(m => ({ id: m.id, name: m.name }));
+  res.json({ ok: true, makes: list });
+});
+
+// GET /api/cars/models?make=
+app.get("/api/cars/models", (req, res) => {
+  const q = String(req.query.make || "").toLowerCase();
+  let list = models.slice();
+  if (q) {
+    list = list.filter(m => m.make.toLowerCase() === q);
+  }
+  const result = list
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map(m => ({
+      id: m.id,
+      make: m.make,
+      name: m.name,
+      years: DEFAULT_YEARS
+    }));
+  res.json({ ok: true, models: result });
+});
+
+// ---------- Dealers and reviews
 app.get("/api/dealers/states", (req, res) => {
   const states = Array.from(new Set(dealers.map(d => d.state))).sort();
   res.json({ ok: true, states });
 });
 
 app.get("/api/dealers", (req, res) => {
-  const { state, city, zip, brand, q } = req.query;
+  const { state, city, zip, brand, q, isNew, isUsed, page, limit } = req.query;
   let list = dealers.slice();
 
   if (state) {
@@ -517,6 +591,17 @@ app.get("/api/dealers", (req, res) => {
       d.brands.map(b => b.toLowerCase()).includes(String(brand).toLowerCase())
     );
   }
+  if (isNew != null) {
+    const want = String(isNew).toLowerCase();
+    if (want === "true" || want === "1") list = list.filter(d => d.isNew);
+    if (want === "false" || want === "0") list = list.filter(d => !d.isNew);
+  }
+  if (isUsed != null) {
+    const want = String(isUsed).toLowerCase();
+    if (want === "true" || want === "1") list = list.filter(d => d.isUsed);
+    if (want === "false" || want === "0") list = list.filter(d => !d.isUsed);
+  }
+
   if (q) {
     // smart search across name, city, state, zip, brands
     const scored = list
@@ -537,6 +622,22 @@ app.get("/api/dealers", (req, res) => {
       return res.json({ ok: true, dealers: [] });
     }
     list = scored.map(x => x.dealer);
+  }
+
+  // Optional pagination. Only apply when page or limit is specified
+  if (page != null || limit != null) {
+    const p = Math.max(1, parseInt(page || "1", 10));
+    const lim = Math.max(1, Math.min(100, parseInt(limit || "25", 10)));
+    const start = (p - 1) * lim;
+    const slice = list.slice(start, start + lim);
+    const nextPage = start + lim < list.length ? p + 1 : null;
+    return res.json({
+      ok: true,
+      dealers: slice.map(toDealerDTO),
+      page: p,
+      nextPage,
+      total: list.length
+    });
   }
 
   res.json({ ok: true, dealers: list.map(toDealerDTO) });
