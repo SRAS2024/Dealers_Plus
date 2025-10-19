@@ -8,7 +8,6 @@
    - Dealers list respects city, state, zip, brand, and q params.
    - Fix: Add Review opens reliably after login and on the dealer page without recursive clicks.
    - Fix: Suggestions dropdown closes on route changes for consistent behavior across screens.
-   - NEW: Pen icon to the left of stars (only on user's own reviews) enters edit mode with Save/Cancel/Delete.
 */
 
 (() => {
@@ -140,7 +139,7 @@
 
   function sentimentBadge(sentiment) {
     const s = String(sentiment || "neutral");
-    const label = s.charAt(0).toUpperCase() + s.slice(1);
+       const label = s.charAt(0).toUpperCase() + s.slice(1);
     const tone =
       s === "positive" ? "success" : s === "negative" ? "danger" : "secondary";
     return `<span class="badge bg-${tone} ms-2">${label}</span>`;
@@ -477,6 +476,29 @@
         const canEdit = me && rv.userId === me.id;
         const cardCol = document.createElement("div");
         cardCol.className = "col-12 col-lg-6";
+        const editMenu = canEdit
+          ? `
+            <div class="dropdown d-inline-block me-2">
+              <button class="btn btn-link p-0" data-bs-toggle="dropdown" aria-expanded="false"
+                      title="Edit or delete your review" aria-label="Edit or delete your review">
+                <i class="bi bi-pen"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                  <button class="dropdown-item" data-action="edit" data-id="${rv.id}">
+                    <i class="bi bi-pencil-square me-2"></i>Edit
+                  </button>
+                </li>
+                <li>
+                  <button class="dropdown-item text-danger" data-action="delete" data-id="${rv.id}">
+                    <i class="bi bi-trash me-2"></i>Delete
+                  </button>
+                </li>
+              </ul>
+            </div>
+          `
+          : "";
+
         cardCol.innerHTML = `
           <div class="p-3 review-card" data-review="${rv.id}">
             <div class="d-flex justify-content-between align-items-start mb-1">
@@ -484,14 +506,8 @@
                 <div class="fw-semibold">${rv.userName}</div>
                 <div class="review-meta">${new Date(rv.time).toLocaleString()}</div>
               </div>
-              <div class="d-flex align-items-center gap-2 text-nowrap">
-                ${
-                  canEdit
-                    ? `<button class="btn btn-link p-0 edit-pen" data-action="edit" data-id="${rv.id}" title="Edit review">
-                         <i class="bi bi-pen"></i>
-                       </button>`
-                    : ""
-                }
+              <div class="text-nowrap">
+                ${editMenu}
                 <span class="rating-stars">${starsHtml(rv.rating)}</span>
                 ${rv.sentiment ? sentimentBadge(rv.sentiment) : ""}
               </div>
@@ -512,10 +528,13 @@
       });
       reviewsRoot.appendChild(frag);
 
+      // bind edit/delete after DOM insert (works for dropdown items too)
       $$('button[data-action="edit"]').forEach(btn => {
         btn.onclick = () => startEditReview(btn.getAttribute("data-id"));
       });
-      // No default delete buttons anymore; delete is available inside edit mode.
+      $$('button[data-action="delete"]').forEach(btn => {
+        btn.onclick = () => deleteReview(btn.getAttribute("data-id"));
+      });
     }
 
     // first page
@@ -571,6 +590,30 @@
         alertBox.classList.remove("d-none");
       }
     });
+
+    async function deleteReview(reviewId) {
+      if (!confirm("Delete this review?")) return;
+      try {
+        await api(`/api/reviews/${encodeURIComponent(reviewId)}`, { method: "DELETE" });
+        showAlert("success", "Review deleted.");
+        // refresh list from first page
+        $("#reviewsList").innerHTML = "";
+        page = 1;
+        await loadPage(page);
+        // also refresh header rating
+        const { dealer: refreshed } = await api(`/api/dealers/${encodeURIComponent(id)}`);
+        $("#dealerRating").textContent = refreshed.rating ? refreshed.rating.toFixed(1) : "0.0";
+        $("#dealerStars").innerHTML = starsHtml(refreshed.rating);
+      } catch (err) {
+        if (String(err.message).includes("Unauthorized")) {
+          pendingAction = { type: "editReview", reviewId };
+          showLogin();
+          accountModal.show();
+          return;
+        }
+        showAlert("danger", err.message || "Failed to delete review");
+      }
+    }
   }
 
   function startEditReview(id) {
@@ -578,7 +621,7 @@
     if (!card) return;
     const textEl = card.querySelector('[data-role="text"]');
     const oldText = textEl.textContent;
-    const headerStars = card.querySelector(".rating-stars")?.innerHTML || "";
+    const headerStarsHtml = (card.querySelector(".rating-stars") || {}).innerHTML || "";
     card.dataset.mode = "edit";
 
     const editor = document.createElement("div");
@@ -592,7 +635,6 @@
         <div class="star-input" data-value="0" data-role="edit-stars"></div>
       </div>
       <div class="mt-3 d-flex gap-2 justify-content-end">
-        <button class="btn btn-outline-danger" data-action="delete-edit">Delete</button>
         <button class="btn btn-outline-dark" data-action="cancel-edit">Cancel</button>
         <button class="btn btn-primary" data-action="save-edit">Save</button>
       </div>
@@ -607,7 +649,7 @@
       starEl.dataset.value = String(val);
     });
     // approximate current rating from header
-    const currentRating = (headerStars.match(/bi-star-fill/g) || []).length;
+    const currentRating = (headerStarsHtml.match(/bi-star-fill/g) || []).length;
     setStarInput(starEl, currentRating);
 
     // set current text
@@ -633,20 +675,16 @@
         // update UI
         textEl.textContent = review.review;
         const containerStars = card.querySelector(".rating-stars");
-        containerStars.innerHTML = starsHtml(review.rating);
+        if (containerStars) containerStars.innerHTML = starsHtml(review.rating);
         card.dataset.mode = "view";
         editor.remove();
         textEl.classList.remove("d-none");
         showAlert("success", "Review updated.");
-        // Refresh dealer page so updated review order/rating reflects
+        // best effort refresh of first page so the updated review moves to top
         const parts = location.hash.split("/");
         const dealerId = parts[2];
         if (dealerId) {
-          // soft refresh to re-paginate and re-fetch rating
-          const pos = card.getBoundingClientRect().top;
           renderDealerDetail(dealerId);
-          // best-effort scroll restore
-          window.scrollTo({ top: window.scrollY + pos - 120, behavior: "instant" });
         }
       } catch (err) {
         if (String(err.message).includes("Unauthorized")) {
@@ -656,31 +694,6 @@
           return;
         }
         alertBox.textContent = err.message || "Failed to update review";
-        alertBox.classList.remove("d-none");
-      }
-    };
-
-    card.querySelector('[data-action="delete-edit"]').onclick = async () => {
-      if (!confirm("Delete this review?")) return;
-      const alertBox = card.querySelector('[data-role="edit-alert"]');
-      alertBox.classList.add("d-none");
-      try {
-        await api(`/api/reviews/${encodeURIComponent(id)}`, { method: "DELETE" });
-        showAlert("success", "Review deleted.");
-        // Re-render dealer detail to refresh list and header rating
-        const parts = location.hash.split("/");
-        const dealerId = parts[2];
-        if (dealerId) {
-          renderDealerDetail(dealerId);
-        }
-      } catch (err) {
-        if (String(err.message).includes("Unauthorized")) {
-          pendingAction = { type: "editReview", reviewId: id };
-          showLogin();
-          accountModal.show();
-          return;
-        }
-        alertBox.textContent = err.message || "Failed to delete review";
         alertBox.classList.remove("d-none");
       }
     };
@@ -950,328 +963,3 @@
     }, 250);
   }
 })();
-public/styles.css
-/* Dealers Plus – theme + components
-   -------------------------------------------------- */
-
-/* ===== CSS Variables ===== */
-:root {
-  --dp-bg: #f7f8fb;
-  --dp-text: #1f2937;
-  --dp-muted: #6b7280;
-  --dp-surface: #ffffff;
-  --dp-border: rgba(15, 23, 42, 0.08);
-  --dp-primary: #0d6efd; /* bootstrap primary */
-  --dp-primary-600: #0b5ed7;
-  --dp-primary-100: #e7f1ff;
-  --dp-warning: #f59e0b;
-
-  --dp-glass-bg: rgba(255, 255, 255, 0.7);
-  --dp-glass-border: rgba(15, 23, 42, 0.08);
-  --dp-glass-blur: 10px;
-
-  --dp-shadow-1: 0 1px 3px rgba(2, 6, 23, 0.06), 0 1px 2px rgba(2, 6, 23, 0.08);
-  --dp-shadow-2: 0 12px 20px rgba(2, 6, 23, 0.10), 0 4px 10px rgba(2, 6, 23, 0.08);
-}
-
-html[data-theme="dark"] {
-  --dp-bg: #0b1220;
-  --dp-text: #e5e7eb;
-  --dp-muted: #94a3b8;
-  --dp-surface: #0f172a;
-  --dp-border: rgba(148, 163, 184, 0.12);
-  --dp-primary: #66aaff;
-  --dp-primary-600: #5496ea;
-  --dp-primary-100: #1b2a44;
-  --dp-warning: #fbbf24;
-
-  --dp-glass-bg: rgba(15, 23, 42, 0.6);
-  --dp-glass-border: rgba(148, 163, 184, 0.14);
-  --dp-glass-blur: 12px;
-}
-
-/* ===== Base ===== */
-html, body {
-  background: var(--dp-bg);
-  color: var(--dp-text);
-}
-
-a {
-  color: var(--dp-primary);
-  text-decoration: none;
-}
-a:hover { text-decoration: underline; }
-
-.text-muted { color: var(--dp-muted) !important; }
-.text-white-75 { color: rgba(255,255,255,0.75) !important; }
-.bg-white-75 { background: rgba(255,255,255,0.75) !important; }
-
-hr {
-  border-color: var(--dp-border);
-  opacity: 1;
-}
-
-/* ===== Brand mark ===== */
-.brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  display: inline-block;
-  background:
-    conic-gradient(from 180deg at 70% 30%, var(--dp-primary), #8b5cf6, #06b6d4, var(--dp-primary));
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35), var(--dp-shadow-1);
-}
-
-/* ===== Glass surfaces ===== */
-.glass {
-  background: var(--dp-glass-bg);
-  border: 1px solid var(--dp-glass-border);
-  border-radius: 1rem;
-  backdrop-filter: blur(var(--dp-glass-blur));
-  -webkit-backdrop-filter: blur(var(--dp-glass-blur));
-  box-shadow: var(--dp-shadow-1);
-}
-
-/* ===== Navbar (glass) ===== */
-.navbar-glass {
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  background: var(--dp-glass-bg);
-  border-bottom: 1px solid var(--dp-glass-border);
-  box-shadow: var(--dp-shadow-1);
-}
-
-.navbar-glass .navbar-brand,
-.navbar-glass .nav-link {
-  color: var(--dp-text);
-}
-.navbar-glass .nav-link:hover {
-  color: var(--dp-primary);
-}
-
-.navbar-toggler {
-  border-color: var(--dp-border);
-}
-.navbar-toggler:focus {
-  box-shadow: 0 0 0 .25rem rgba(13,110,253,.25);
-}
-.navbar-toggler-icon {
-  background-image:
-    url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 16 16'%3e%3cpath stroke='rgba(100,116,139,1)' stroke-linecap='round' stroke-width='1.5' d='M2 4.5h12M2 8h12M2 11.5h12'/%3e%3c/svg%3e");
-}
-
-/* ===== Theme orb (simple glowing circle) ===== */
-.theme-orb {
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #0b3a8f; /* dark blue when light mode is active */
-  box-shadow:
-    0 0 0 1px rgba(0,0,0,0.12) inset,
-    0 0 10px rgba(13,110,253,0.28);
-  transition: background .2s ease, box-shadow .2s ease, transform .05s ease;
-}
-.theme-orb:active { transform: scale(.98); }
-
-/* Dark mode ON -> white orb with a soft glow */
-html[data-theme="dark"] .theme-orb {
-  background: #ffffff;
-  box-shadow:
-    0 0 0 1px rgba(0,0,0,0.18) inset,
-    0 0 10px rgba(255,255,255,0.25);
-}
-
-/* remove icon glyphs from old design */
-.theme-orb::before { content: none; }
-html[data-theme="dark"] .theme-orb::before { content: none; }
-
-/* ===== Hero ===== */
-.hero-section {
-  position: relative;
-  padding: clamp(2rem, 5vw, 4rem) 1rem;
-  background:
-    radial-gradient(120% 80% at 0% 0%, rgba(99,102,241,.55), rgba(99,102,241,.0) 60%),
-    radial-gradient(120% 80% at 100% 100%, rgba(14,165,233,.45), rgba(14,165,233,.0) 60%),
-    linear-gradient(180deg, #111827, #0b1220);
-  border-radius: 1.25rem;
-  overflow: hidden;
-  box-shadow: var(--dp-shadow-2);
-}
-html[data-theme="dark"] .hero-section {
-  background:
-    radial-gradient(120% 80% at 0% 0%, rgba(59,130,246,.45), rgba(59,130,246,.0) 60%),
-    radial-gradient(120% 80% at 100% 100%, rgba(139,92,246,.45), rgba(139,92,246,.0) 60%),
-    linear-gradient(180deg, #0b1220, #0b1220);
-}
-.hero-section .lead { margin-bottom: 0; }
-
-/* hero search wrapper tweak */
-.search-wrap .input-group > .form-control {
-  padding: .9rem 1rem;
-}
-.search-wrap .input-group > .btn {
-  padding: .9rem 1.25rem;
-}
-
-/* ===== Search (top bar) ===== */
-.search-input {
-  border: 1px solid var(--dp-border);
-  background: var(--dp-surface);
-}
-.search-input::placeholder {
-  color: var(--dp-muted);
-}
-
-/* Suggestions dropdown (shared .dropdown-menu) */
-#suggestions.dropdown-menu {
-  max-height: 360px;
-  overflow: auto;
-  border: 1px solid var(--dp-border);
-  box-shadow: var(--dp-shadow-2);
-}
-#suggestions .dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: .25rem;
-}
-#suggestions .badge {
-  background: var(--dp-primary-100);
-  color: var(--dp-primary-600);
-  font-weight: 600;
-  text-transform: capitalize;
-}
-
-/* ===== Buttons: soft primary ===== */
-.btn.btn-primary-soft {
-  background: var(--dp-primary-100);
-  color: var(--dp-primary-600);
-  border: 1px solid transparent;
-}
-.btn.btn-primary-soft:hover {
-  background: rgba(13, 110, 253, 0.12);
-  color: var(--dp-primary);
-}
-
-/* ===== Badges: soft ===== */
-.badge-soft {
-  display: inline-block;
-  padding: .25rem .5rem;
-  border-radius: 999px;
-  background: rgba(13, 110, 253, .1);
-  color: var(--dp-primary-600);
-  font-weight: 600;
-  font-size: .75rem;
-  border: 1px solid rgba(13,110,253,.12);
-}
-html[data-theme="dark"] .badge-soft {
-  background: rgba(102, 170, 255, .15);
-  color: #dbeafe;
-  border-color: rgba(102,170,255,.25);
-}
-
-/* ===== Tables ===== */
-.table {
-  --bs-table-striped-bg: transparent;
-}
-.table thead th {
-  font-weight: 600;
-  color: var(--dp-muted);
-  border-bottom-color: var(--dp-border);
-}
-.table td, .table th { border-color: var(--dp-border); }
-.table .actions .btn { white-space: nowrap; }
-
-/* ===== Dealer detail ===== */
-.review-card {
-  border: 1px solid var(--dp-border);
-  border-radius: .75rem;
-  background: var(--dp-surface);
-  box-shadow: var(--dp-shadow-1);
-}
-.review-meta {
-  font-size: .8rem;
-  color: var(--dp-muted);
-}
-
-/* Make the tiny pen feel subtle */
-.edit-pen {
-  opacity: .8;
-}
-.edit-pen:hover,
-.edit-pen:focus {
-  opacity: 1;
-  text-decoration: none;
-}
-
-/* ===== Star input ===== */
-.star-input .star {
-  line-height: 1;
-}
-.star-input .star .bi {
-  font-size: 1.25rem;
-}
-.star-input .star:hover .bi,
-.star-input .star:focus .bi {
-  transform: translateY(-1px);
-}
-.star-input .star:focus {
-  outline: 2px solid rgba(13,110,253,.4);
-  border-radius: .375rem;
-}
-
-/* ===== Forms & Modals ===== */
-.modal-content.glass {
-  background: var(--dp-glass-bg);
-  border: 1px solid var(--dp-glass-border);
-  backdrop-filter: blur(var(--dp-glass-blur));
-  -webkit-backdrop-filter: blur(var(--dp-glass-blur));
-}
-.form-control,
-.form-select {
-  background-color: var(--dp-surface);
-  color: var(--dp-text);
-  border-color: var(--dp-border);
-}
-.form-control:focus,
-.form-select:focus {
-  border-color: var(--dp-primary);
-  box-shadow: 0 0 0 .2rem rgba(13,110,253,.15);
-}
-
-/* ===== Footer ===== */
-footer.glass,
-footer.bg-white-75.glass {
-  background: var(--dp-glass-bg);
-}
-
-/* ===== Utilities ===== */
-.rounded-4 { border-radius: 1rem !important; }
-.shadow-1 { box-shadow: var(--dp-shadow-1); }
-.shadow-2 { box-shadow: var(--dp-shadow-2); }
-
-/* Better focus visible */
-:focus-visible {
-  outline: 2px solid var(--dp-primary);
-  outline-offset: 2px;
-}
-
-/* Make dropdown buttons look like menu items */
-.dropdown-menu .dropdown-item {
-  width: 100%;
-  text-align: left;
-}
-
-/* ===== Small screens ===== */
-@media (max-width: 575.98px) {
-  .theme-orb { width: 32px; height: 32px; }
-  .navbar .dropdown.flex-grow-1 { min-width: 0 !important; }
-}
-
-/* ===== Print tweaks ===== */
-@media print {
-  .navbar, .footer, .btn, .modal { display: none !important; }
-  .glass { background: #fff !important; box-shadow: none !important; }
-}
