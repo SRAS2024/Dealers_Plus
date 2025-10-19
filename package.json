@@ -1,18 +1,19 @@
 {
   "name": "dealers-plus",
   "version": "1.0.0",
+  "description": "Dealers Plus, a modern dealership reviews portal with smart search and user accounts.",
+  "license": "MIT",
   "private": true,
-  "description": "Dealers Plus — simple dealers finder with reviews (Express + Vanilla JS)",
   "main": "server/index.js",
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "scripts": {
+    "postinstall": "node server/seed.osm.js",
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
-    "seed": "node server/seed.osm.js",
-    "seed:fast": "PER_STATE=50 node server/seed.osm.js",
-    "seed:reverse": "REVERSE_GEOCODE=1 REVERSE_LIMIT=300 node server/seed.osm.js"
+    "seed": "node server/seed.js",
+    "seed:free": "node server/seed.osm.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -22,6 +23,6 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.1.0"
   }
 }
