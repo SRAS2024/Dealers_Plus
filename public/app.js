@@ -6,6 +6,8 @@
    - Smarter search parsing on Enter: detects ZIP, "City, ST", "City ST", or "City State".
    - Suggestion clicks now route by type: zip, city, state, brand.
    - Dealers list respects city, state, zip, brand, and q params.
+   - Fix: Add Review opens reliably after login and on the dealer page without recursive clicks.
+   - Fix: Suggestions dropdown closes on route changes for consistent behavior across screens.
 */
 
 (() => {
@@ -62,7 +64,6 @@
     const t = String(tok).trim().toLowerCase();
     if (t.length === 2 && STATE_CODES.has(t.toUpperCase())) return t.toUpperCase();
     if (STATE_NAME_TO_CODE[t]) return STATE_NAME_TO_CODE[t];
-    // try to map tokens like "north" "carolina"
     const joined = t.replace(/\s+/g, " ");
     if (STATE_NAME_TO_CODE[joined]) return STATE_NAME_TO_CODE[joined];
     return "";
@@ -277,6 +278,11 @@
         dd.classList.remove("show");
       }
     });
+
+    // Close suggestions when the route changes to keep behavior consistent across screens
+    window.addEventListener("hashchange", () => {
+      dd.classList.remove("show");
+    });
   }
 
   function goDealersSearch(query) {
@@ -365,10 +371,8 @@
     btnApply.onclick = () => {
       const st = stateSelect.value;
       const next = new URLSearchParams();
-      // keep free text q if present
       const q = params.get("q") || "";
       if (q) next.set("q", q);
-      // changing state clears city and zip filters to avoid overfiltering
       if (st) next.set("state", st);
       location.hash = `#/dealers${next.toString() ? "?" + next.toString() : ""}`;
     };
@@ -411,7 +415,6 @@
         btn.onclick = () => beginAddReview(btn.getAttribute("data-id"));
       });
 
-      // reflect current state in dropdown after options load
       if (params.get("state")) {
         stateSelect.value = params.get("state");
       }
@@ -863,8 +866,11 @@
     if (action.type === "addReview") {
       location.hash = `#/dealer/${action.dealerId}`;
       setTimeout(() => {
-        const btn = $("#btnAddReview");
-        if (btn) btn.click();
+        const modalEl = $("#reviewModal");
+        if (modalEl) {
+          reviewModal = reviewModal || new bootstrap.Modal(modalEl);
+          reviewModal.show();
+        }
         if (action.payload) {
           $("#rfText").value = action.payload.review || "";
           setStarInput($("#rfStars"), action.payload.rating || 0);
@@ -875,7 +881,7 @@
           $("#rfModel").value = action.payload.car_model || "";
           $("#rfYear").value = action.payload.car_year || "";
         }
-      }, 250);
+      }, 300);
     } else if (action.type === "editReview") {
       const parts = location.hash.split("/");
       const dealerId = parts[2];
@@ -918,10 +924,27 @@
       accountModal.show();
       return;
     }
-    location.hash = `#/dealer/${dealerId}`;
+
+    const targetHash = `#/dealer/${dealerId}`;
+
+    // If already on the dealer page, show the modal directly
+    if (location.hash === targetHash) {
+      const modalEl = $("#reviewModal");
+      if (modalEl) {
+        reviewModal = reviewModal || new bootstrap.Modal(modalEl);
+        reviewModal.show();
+      }
+      return;
+    }
+
+    // Navigate to the dealer page, then open the modal when ready
+    location.hash = targetHash;
     setTimeout(() => {
-      const btn = $("#btnAddReview");
-      btn && btn.click();
-    }, 200);
+      const modalEl = $("#reviewModal");
+      if (modalEl) {
+        reviewModal = reviewModal || new bootstrap.Modal(modalEl);
+        reviewModal.show();
+      }
+    }, 250);
   }
 })();
