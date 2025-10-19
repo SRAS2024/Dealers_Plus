@@ -2,57 +2,58 @@
 // Build a real dealers dataset from OpenStreetMap via Overpass API (free).
 // Writes seed/dealers.json which server/index.js auto-loads.
 //
-// Usage (local / one-off):
+// Usage:
 //   node server/seed.osm.js
-//   PER_STATE=0 node server/seed.osm.js            # 0 = no per-state cap (keep all)  ⚠ slow
-//   PER_STATE=40 node server/seed.osm.js           # cap to 40 per state
-//   ONLY_STATES=CO,CA,TX node server/seed.osm.js   # limit to a subset of states
-//   MAX_REVERSE=0 node server/seed.osm.js          # (default) skip reverse geocoding
-//   MAX_REVERSE=200 OSM_CONTACT=you@domain.com node server/seed.osm.js  # enable light reverse
+//   PER_STATE=0 node server/seed.osm.js         # 0 = no per-state cap (keep all)
+//   PER_STATE=60 node server/seed.osm.js        # cap to 60 per state
 //
 // Notes:
 // - Filters out disused/abandoned lifecycle tags, keeps only "shop=car" or "amenity=car_dealership".
 // - Brand detection from name/brand/operator tags.
-// - Reverse geocoding (Nominatim) is DISABLED by default to keep runs short.
+// - Optional (polite) Nominatim reverse geocoding to fill missing city names.
+// - Writes partial progress after each state so long runs are resumable.
 // - Please add attribution in your UI: "© OpenStreetMap contributors".
 
 const fs = require("fs");
 const path = require("path");
 
 // Node 18+ has global fetch; engines already set to >=18 in package.json.
-
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ---------- config (tuned for fast runs by default)
-const PER_STATE = Number(process.env.PER_STATE ?? 30); // smaller cap keeps runtime reasonable
+// ---------- config
+// PER_STATE: 0 = keep all found; otherwise cap per state
+const PER_STATE = Number(process.env.PER_STATE ?? 50);
 const OUT_DIR = path.join(__dirname, "..", "seed");
 const OUT_FILE = path.join(OUT_DIR, "dealers.json");
 
-// Optional: limit to subset of states, e.g. "CO,CA,TX"
-const ONLY_STATES = String(process.env.ONLY_STATES || "")
-  .split(",")
-  .map(s => s.trim().toUpperCase())
-  .filter(Boolean);
+// Overpass endpoint (allow override if primary is slow)
+const OVERPASS_URL =
+  process.env.OVERPASS_URL || "https://overpass-api.de/api/interpreter";
 
-// Reverse geocode (for missing city) — off by default to avoid long builds.
+// Reverse geocode (for missing city) — be polite.
+// Default MAX_REVERSE=0 to avoid long builds; set to a higher number when you run locally.
 const CONTACT_EMAIL =
   process.env.OSM_CONTACT ||
   process.env.NOMINATIM_EMAIL ||
   "please-set-OSM_CONTACT@example.com";
-const MAX_REVERSE = Number(process.env.MAX_REVERSE ?? 0); // 0 = disabled by default
+const MAX_REVERSE = Number(process.env.MAX_REVERSE ?? 0); // 0 = off by default
 const REVERSE_RATE_MS = Number(process.env.REVERSE_RATE_MS ?? 1100); // >= 1 req/sec per Nominatim policy
-const STATE_DELAY_MS = Number(process.env.STATE_DELAY_MS ?? 800); // polite delay between state queries
+
+// Optionally limit to a subset of states to seed in chunks, e.g. ONLY_STATES="CO,CA,AZ"
+const ONLY_STATES = (process.env.ONLY_STATES || "")
+  .split(",")
+  .map(s => s.trim().toUpperCase())
+  .filter(Boolean);
 
 // US state codes
-const ALL_STATES = [
+const STATES_ALL = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
   "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
   "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
   "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
 ];
-
-const STATES = ONLY_STATES.length ? ONLY_STATES : ALL_STATES;
+const STATES = ONLY_STATES.length ? ONLY_STATES : STATES_ALL;
 
 const BRANDS = [
   "Toyota","Honda","Ford","Chevrolet","Nissan","Hyundai","Kia","Volkswagen",
@@ -82,7 +83,6 @@ function isLifecycleClosed(tags) {
   const ok = tags.shop === "car" || tags.amenity === "car_dealership";
   return !ok;
 }
-
 function firstNonEmpty(...vals) {
   for (const v of vals) {
     const s = normalize(v);
@@ -126,7 +126,7 @@ function mapOsmElement(el, stateCode) {
     phone,
     isNew,
     isUsed,
-    // keep lat/lon temporarily for reverse geocode enrichment (server ignores unknown fields)
+    // keep lat/lon for future "near ZIP / near me" queries
     lat,
     lon
   };
@@ -146,7 +146,6 @@ function dedupeDealers(list) {
 }
 
 async function fetchOverpassForState(state) {
-  // Use ISO3166-2 state area (e.g., US-CA) to bound results.
   const query = `
 [out:json][timeout:60];
 area["ISO3166-2"="US-${state}"]->.a;
@@ -161,7 +160,7 @@ area["ISO3166-2"="US-${state}"]->.a;
 out tags center;
   `.trim();
 
-  const res = await fetch("https://overpass-api.de/api/interpreter", {
+  const res = await fetch(OVERPASS_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -208,7 +207,6 @@ async function reverseCity(lat, lon) {
   if (!res.ok) return "";
   const j = await res.json().catch(() => ({}));
   const a = j.address || {};
-  // prefer a proper city-like key, fallback to county as last resort
   return (
     a.city ||
     a.town ||
@@ -223,7 +221,6 @@ async function reverseCity(lat, lon) {
 
 // fill missing city via reverse geocoding (polite limits)
 async function enrichMissingCities(dealers) {
-  if (MAX_REVERSE <= 0) return; // disabled by default
   let used = 0;
   for (const d of dealers) {
     if (d.city) continue;
@@ -235,39 +232,51 @@ async function enrichMissingCities(dealers) {
   }
 }
 
+(function ensureOutDir() {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+})();
+
 (async () => {
   const all = [];
+
+  // If an existing JSON exists, load it so the run can resume/append.
+  try {
+    if (fs.existsSync(OUT_FILE)) {
+      const prev = JSON.parse(fs.readFileSync(OUT_FILE, "utf8"));
+      if (Array.isArray(prev)) all.push(...prev);
+    }
+  } catch {}
+
   for (const state of STATES) {
     try {
       const list = await fetchOverpassForState(state);
 
-      // best-effort: (optional) fill missing city names so user searches like "Colorado Springs" will match
-      const needCity = list.filter(d => !d.city && d.lat != null && d.lon != null);
-      if (MAX_REVERSE > 0 && needCity.length) {
-        console.log(`US-${state}: resolving cities for up to ${Math.min(needCity.length, MAX_REVERSE)} items...`);
-        await enrichMissingCities(needCity);
+      // best-effort: fill missing city names so user searches like "Colorado Springs" will match
+      if (MAX_REVERSE > 0) {
+        const needCity = list.filter(d => !d.city && d.lat != null && d.lon != null);
+        if (needCity.length) {
+          console.log(`US-${state}: resolving cities for ${needCity.length} items...`);
+          await enrichMissingCities(needCity);
+        }
       }
 
-      // strip lat/lon before persisting (optional; server ignores them anyway)
-      list.forEach(d => {
-        delete d.lat;
-        delete d.lon;
-      });
-
       all.push(...list);
-      console.log(`US-${state}: +${list.length} dealers (total ${all.length})`);
+      const partial = dedupeDealers(all);
 
-      // be polite to Overpass & CI timeouts
-      await sleep(STATE_DELAY_MS);
+      // write partial progress after each state
+      fs.writeFileSync(OUT_FILE, JSON.stringify(partial, null, 2), "utf8");
+
+      console.log(`US-${state}: +${list.length} dealers (total ${partial.length})`);
+      // be polite to Overpass
+      await sleep(1000);
     } catch (e) {
       console.error(`US-${state} failed:`, e.message);
       // small backoff then continue
-      await sleep(Math.max(STATE_DELAY_MS, 1500));
+      await sleep(2000);
     }
   }
 
   const finalList = dedupeDealers(all);
-  fs.mkdirSync(OUT_DIR, { recursive: true });
   fs.writeFileSync(OUT_FILE, JSON.stringify(finalList, null, 2), "utf8");
   console.log(`\nWrote ${finalList.length} dealerships to ${path.relative(process.cwd(), OUT_FILE)} (free OSM data).`);
   console.log('Attribution: Data © OpenStreetMap contributors (ODbL).');
