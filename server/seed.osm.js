@@ -2,15 +2,18 @@
 // Build a real dealers dataset from OpenStreetMap via Overpass API (free).
 // Writes seed/dealers.json which server/index.js auto-loads.
 //
-// Usage:
+// Usage (local / one-off):
 //   node server/seed.osm.js
-//   PER_STATE=0 node server/seed.osm.js         # 0 = no per-state cap (keep all)
-//   PER_STATE=60 node server/seed.osm.js        # cap to 60 per state
+//   PER_STATE=0 node server/seed.osm.js            # 0 = no per-state cap (keep all)  ⚠ slow
+//   PER_STATE=40 node server/seed.osm.js           # cap to 40 per state
+//   ONLY_STATES=CO,CA,TX node server/seed.osm.js   # limit to a subset of states
+//   MAX_REVERSE=0 node server/seed.osm.js          # (default) skip reverse geocoding
+//   MAX_REVERSE=200 OSM_CONTACT=you@domain.com node server/seed.osm.js  # enable light reverse
 //
 // Notes:
 // - Filters out disused/abandoned lifecycle tags, keeps only "shop=car" or "amenity=car_dealership".
 // - Brand detection from name/brand/operator tags.
-// - Tries hard to fill missing city using address fallbacks and (polite) Nominatim reverse geocoding.
+// - Reverse geocoding (Nominatim) is DISABLED by default to keep runs short.
 // - Please add attribution in your UI: "© OpenStreetMap contributors".
 
 const fs = require("fs");
@@ -20,28 +23,36 @@ const path = require("path");
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ---------- config
-// PER_STATE: 0 = keep all found; otherwise cap per state
-const PER_STATE = Number(process.env.PER_STATE ?? 50);
+// ---------- config (tuned for fast runs by default)
+const PER_STATE = Number(process.env.PER_STATE ?? 30); // smaller cap keeps runtime reasonable
 const OUT_DIR = path.join(__dirname, "..", "seed");
 const OUT_FILE = path.join(OUT_DIR, "dealers.json");
 
-// Reverse geocode (for missing city) — be polite.
+// Optional: limit to subset of states, e.g. "CO,CA,TX"
+const ONLY_STATES = String(process.env.ONLY_STATES || "")
+  .split(",")
+  .map(s => s.trim().toUpperCase())
+  .filter(Boolean);
+
+// Reverse geocode (for missing city) — off by default to avoid long builds.
 const CONTACT_EMAIL =
   process.env.OSM_CONTACT ||
   process.env.NOMINATIM_EMAIL ||
   "please-set-OSM_CONTACT@example.com";
-const MAX_REVERSE = Number(process.env.MAX_REVERSE ?? 400); // total reverse lookups across run
-const REVERSE_RATE_MS = Number(process.env.REVERSE_RATE_MS ?? 1100); // >= 1 req/sec as per Nominatim policy
+const MAX_REVERSE = Number(process.env.MAX_REVERSE ?? 0); // 0 = disabled by default
+const REVERSE_RATE_MS = Number(process.env.REVERSE_RATE_MS ?? 1100); // >= 1 req/sec per Nominatim policy
+const STATE_DELAY_MS = Number(process.env.STATE_DELAY_MS ?? 800); // polite delay between state queries
 
 // US state codes
-const STATES = [
+const ALL_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA",
   "HI","ID","IL","IN","IA","KS","KY","LA","ME","MD",
   "MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
   "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC",
   "SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"
 ];
+
+const STATES = ONLY_STATES.length ? ONLY_STATES : ALL_STATES;
 
 const BRANDS = [
   "Toyota","Honda","Ford","Chevrolet","Nissan","Hyundai","Kia","Volkswagen",
@@ -212,6 +223,7 @@ async function reverseCity(lat, lon) {
 
 // fill missing city via reverse geocoding (polite limits)
 async function enrichMissingCities(dealers) {
+  if (MAX_REVERSE <= 0) return; // disabled by default
   let used = 0;
   for (const d of dealers) {
     if (d.city) continue;
@@ -229,10 +241,10 @@ async function enrichMissingCities(dealers) {
     try {
       const list = await fetchOverpassForState(state);
 
-      // best-effort: fill missing city names so user searches like "Colorado Springs" will match
+      // best-effort: (optional) fill missing city names so user searches like "Colorado Springs" will match
       const needCity = list.filter(d => !d.city && d.lat != null && d.lon != null);
-      if (needCity.length) {
-        console.log(`US-${state}: resolving cities for ${needCity.length} items...`);
+      if (MAX_REVERSE > 0 && needCity.length) {
+        console.log(`US-${state}: resolving cities for up to ${Math.min(needCity.length, MAX_REVERSE)} items...`);
         await enrichMissingCities(needCity);
       }
 
@@ -244,12 +256,13 @@ async function enrichMissingCities(dealers) {
 
       all.push(...list);
       console.log(`US-${state}: +${list.length} dealers (total ${all.length})`);
-      // be polite to Overpass
-      await sleep(1000);
+
+      // be polite to Overpass & CI timeouts
+      await sleep(STATE_DELAY_MS);
     } catch (e) {
       console.error(`US-${state} failed:`, e.message);
       // small backoff then continue
-      await sleep(2000);
+      await sleep(Math.max(STATE_DELAY_MS, 1500));
     }
   }
 
