@@ -107,27 +107,42 @@ hr {
     url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 16 16'%3e%3cpath stroke='rgba(100,116,139,1)' stroke-linecap='round' stroke-width='1.5' d='M2 4.5h12M2 8h12M2 11.5h12'/%3e%3c/svg%3e");
 }
 
-/* ===== Theme orb ===== */
+/* ===== Theme orb (simple glowing dot) =====
+   Light mode (default): dark blue faint glow.
+   Dark mode: white faint glow.
+   No icon inside — just the orb. */
 .theme-orb {
   width: 36px;
   height: 36px;
   border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: radial-gradient(120% 120% at 20% 20%, #fff 0%, #f3f4f6 50%, #e5e7eb 100%);
-  box-shadow: var(--dp-shadow-1), inset 0 0 0 1px rgba(0,0,0,0.06);
+  display: inline-block;
+  border: 0;
+  background: #0f2a6b; /* dark blue when LIGHT mode */
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,.12),
+    0 0 10px rgba(13,110,253,.25);
 }
-.theme-orb::before {
-  content: "☀";
-  font-size: 16px;
-  line-height: 1;
+.theme-orb::before { content: ""; } /* remove ☀/🌙 */
+.theme-orb:hover {
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,.12),
+    0 0 14px rgba(13,110,253,.35);
+}
+.theme-orb:focus-visible {
+  outline: 2px solid rgba(13,110,253,.45);
+  outline-offset: 2px;
 }
 html[data-theme="dark"] .theme-orb {
-  background: radial-gradient(120% 120% at 20% 20%, #1f2937 0%, #111827 60%, #0b1220 100%);
-  box-shadow: var(--dp-shadow-1), inset 0 0 0 1px rgba(255,255,255,0.08);
+  background: #ffffff; /* white when DARK mode */
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.25),
+    0 0 12px rgba(255,255,255,.35);
 }
-html[data-theme="dark"] .theme-orb::before { content: "🌙"; }
+html[data-theme="dark"] .theme-orb:hover {
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.25),
+    0 0 16px rgba(255,255,255,.45);
+}
 
 /* ===== Hero ===== */
 .hero-section {
@@ -235,6 +250,16 @@ html[data-theme="dark"] .badge-soft {
 .review-meta {
   font-size: .8rem;
   color: var(--dp-muted);
+}
+
+/* Subtle styling for the inline pen button (owner-only controls) */
+.review-card .btn-link {
+  color: var(--dp-muted);
+  text-decoration: none;
+}
+.review-card .btn-link:hover {
+  color: var(--dp-text);
+  text-decoration: none;
 }
 
 /* ===== Star input ===== */
