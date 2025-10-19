@@ -1,6 +1,11 @@
 /* Dealers Plus front-end
    Vanilla JS + Bootstrap
    Hash router with views for home, dealers list, dealer detail, about, contact
+
+   Update highlights:
+   - Smarter search parsing on Enter: detects ZIP, "City, ST", "City ST", or "City State".
+   - Suggestion clicks now route by type: zip, city, state, brand.
+   - Dealers list respects city, state, zip, brand, and q params.
 */
 
 (() => {
@@ -19,6 +24,83 @@
   const viewRoot = $("#viewRoot");
   const globalAlert = $("#globalAlert");
   const yearEl = $("#year");
+
+  // Static helpers and maps
+  const STATE_NAME_TO_CODE = {
+    alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR",
+    california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE",
+    florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID",
+    illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS",
+    kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD",
+    "massachusetts": "MA", michigan: "MI", minnesota: "MN", "mississippi": "MS",
+    "missouri": "MO", montana: "MT", nebraska: "NE", nevada: "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK",
+    oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT",
+    vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV",
+    wisconsin: "WI", wyoming: "WY", "district of columbia": "DC"
+  };
+  const STATE_CODES = new Set(Object.values(STATE_NAME_TO_CODE));
+
+  function toTitleCase(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\b[a-z]/g, ch => ch.toUpperCase());
+  }
+
+  function looksLikeZip(s) {
+    return /^\s*\d{5}(-\d{4})?\s*$/i.test(String(s || ""));
+  }
+  function zip5(s) {
+    const d = String(s || "").replace(/\D+/g, "");
+    return d.slice(0, 5);
+  }
+  function normalizeStateToken(tok) {
+    if (!tok) return "";
+    const t = String(tok).trim().toLowerCase();
+    if (t.length === 2 && STATE_CODES.has(t.toUpperCase())) return t.toUpperCase();
+    if (STATE_NAME_TO_CODE[t]) return STATE_NAME_TO_CODE[t];
+    // try to map tokens like "north" "carolina"
+    const joined = t.replace(/\s+/g, " ");
+    if (STATE_NAME_TO_CODE[joined]) return STATE_NAME_TO_CODE[joined];
+    return "";
+  }
+
+  // Parse free text into concrete filters when possible
+  // Returns an object like { zip } or { city, state } or { q } or { brand }
+  function parseSearchQuery(input) {
+    const raw = String(input || "").trim();
+    if (!raw) return { q: "" };
+
+    // ZIP
+    if (looksLikeZip(raw)) {
+      return { zip: zip5(raw) };
+    }
+
+    // Split by comma first: "City, ST" or "City, State"
+    if (raw.includes(",")) {
+      const [left, right] = raw.split(",", 2);
+      const city = toTitleCase(left);
+      const st = normalizeStateToken(right);
+      if (city && st) return { city, state: st };
+    }
+
+    // Try "City ST" or "City State"
+    const parts = raw.split(/\s+/);
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1];
+      const st = normalizeStateToken(last);
+      if (st) {
+        const city = toTitleCase(parts.slice(0, parts.length - 1).join(" "));
+        if (city) return { city, state: st };
+      }
+    }
+
+    // Fallback free text
+    return { q: raw };
+  }
 
   // Init
   document.addEventListener("DOMContentLoaded", () => {
@@ -101,7 +183,6 @@
         me = null;
         setAuthedUI(false);
         showAlert("success", "Logged out.");
-        // if user was on a protected action, nothing else to do here
       };
     } else {
       accountBtn.classList.remove("d-none");
@@ -123,6 +204,22 @@
     const btn = $("#searchGo");
     const dd = $("#suggestions");
 
+    function routeForSuggestion(kind, value) {
+      const p = new URLSearchParams();
+      if (kind === "zip") {
+        p.set("zip", zip5(value));
+      } else if (kind === "state") {
+        p.set("state", normalizeStateToken(value));
+      } else if (kind === "city") {
+        p.set("city", toTitleCase(value));
+      } else if (kind === "brand") {
+        p.set("brand", value);
+      } else {
+        p.set("q", value);
+      }
+      location.hash = `#/dealers${p.toString() ? "?" + p.toString() : ""}`;
+    }
+
     let debounce;
     input.addEventListener("input", () => {
       clearTimeout(debounce);
@@ -133,7 +230,6 @@
       }
       debounce = setTimeout(async () => {
         try {
-          // alias endpoint supported by server
           const data = await api(`/api/search/suggest?q=${encodeURIComponent(q)}`);
           const items = data.suggestions || [];
           if (!items.length) {
@@ -151,9 +247,11 @@
           dd.classList.add("show");
           $$("#suggestions .dropdown-item").forEach(el => {
             el.onclick = () => {
-              input.value = el.getAttribute("data-value");
+              const kind = el.getAttribute("data-kind");
+              const value = el.getAttribute("data-value");
+              input.value = value;
               dd.classList.remove("show");
-              goDealersSearch(input.value);
+              routeForSuggestion(kind, value);
             };
           });
         } catch {
@@ -182,13 +280,14 @@
   }
 
   function goDealersSearch(query) {
-    const q = String(query || "").trim();
-    if (!q) {
-      location.hash = "#/dealers";
-      return;
-    }
-    // pass q via hash query
-    location.hash = `#/dealers?q=${encodeURIComponent(q)}`;
+    const parsed = parseSearchQuery(query);
+    const p = new URLSearchParams();
+    if (parsed.zip) p.set("zip", parsed.zip);
+    if (parsed.city) p.set("city", parsed.city);
+    if (parsed.state) p.set("state", parsed.state);
+    if (parsed.brand) p.set("brand", parsed.brand);
+    if (parsed.q) p.set("q", parsed.q);
+    location.hash = `#/dealers${p.toString() ? "?" + p.toString() : ""}`;
   }
 
   // Router
@@ -265,11 +364,13 @@
     // apply handlers
     btnApply.onclick = () => {
       const st = stateSelect.value;
+      const next = new URLSearchParams();
+      // keep free text q if present
       const q = params.get("q") || "";
-      const p = new URLSearchParams();
-      if (q) p.set("q", q);
-      if (st) p.set("state", st);
-      location.hash = `#/dealers${p.toString() ? "?" + p.toString() : ""}`;
+      if (q) next.set("q", q);
+      // changing state clears city and zip filters to avoid overfiltering
+      if (st) next.set("state", st);
+      location.hash = `#/dealers${next.toString() ? "?" + next.toString() : ""}`;
     };
 
     // initial fetch
@@ -278,6 +379,9 @@
     async function fetchDealers() {
       const query = {};
       if (params.get("state")) query.state = params.get("state");
+      if (params.get("city")) query.city = params.get("city");
+      if (params.get("zip")) query.zip = params.get("zip");
+      if (params.get("brand")) query.brand = params.get("brand");
       if (params.get("q")) query.q = params.get("q");
 
       const qstr = new URLSearchParams(query).toString();
@@ -307,7 +411,7 @@
         btn.onclick = () => beginAddReview(btn.getAttribute("data-id"));
       });
 
-      // set dropdown to current state param after options load
+      // reflect current state in dropdown after options load
       if (params.get("state")) {
         stateSelect.value = params.get("state");
       }
@@ -562,7 +666,6 @@
         const parts = location.hash.split("/");
         const dealerId = parts[2];
         if (dealerId) {
-          // reload dealer detail page to reset paging and order
           renderDealerDetail(dealerId);
         }
       } catch (err) {
@@ -644,7 +747,6 @@
         resumePendingIfAny();
       } catch (err) {
         alertBox.className = "alert alert-danger";
-        // match requested message
         alertBox.textContent = "Invalid Username or Password";
         alertBox.classList.remove("d-none");
       }
@@ -716,7 +818,6 @@
         $("#resetSection").appendChild(submitBtn);
       } catch (err) {
         alertBox.className = "alert alert-danger";
-        // match requested message
         alertBox.textContent = "Invalid Credentials";
         alertBox.classList.remove("d-none");
       }
@@ -760,13 +861,10 @@
     pendingAction = null;
     if (!action) return;
     if (action.type === "addReview") {
-      // open dealer page and show modal
       location.hash = `#/dealer/${action.dealerId}`;
-      // wait a tick for render then open modal
       setTimeout(() => {
         const btn = $("#btnAddReview");
         if (btn) btn.click();
-        // prefill if we had data
         if (action.payload) {
           $("#rfText").value = action.payload.review || "";
           setStarInput($("#rfStars"), action.payload.rating || 0);
@@ -779,13 +877,10 @@
         }
       }, 250);
     } else if (action.type === "editReview") {
-      // best effort: reload current dealer detail
       const parts = location.hash.split("/");
       const dealerId = parts[2];
       if (dealerId) {
-        renderDealerDetail(dealerId).then(() => {
-          // no auto open, user can choose to edit again
-        });
+        renderDealerDetail(dealerId).then(() => {});
       }
     }
   }
@@ -823,7 +918,6 @@
       accountModal.show();
       return;
     }
-    // navigate to dealer page and open modal
     location.hash = `#/dealer/${dealerId}`;
     setTimeout(() => {
       const btn = $("#btnAddReview");
