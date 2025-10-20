@@ -412,6 +412,7 @@ app.post("/api/auth/register", async (req, res) => {
     .json({
       ok: true,
       user: {
+        id: user.id, // include id so the client can identify authorship immediately
         username: user.username,
         firstName: user.firstName,
         lastName: user.lastName,
@@ -443,6 +444,7 @@ app.post("/api/auth/login", async (req, res) => {
     .json({
       ok: true,
       user: {
+        id: user.id, // include id so the client can identify authorship immediately
         username: user.username,
         firstName: user.firstName,
         lastName: user.lastName,
